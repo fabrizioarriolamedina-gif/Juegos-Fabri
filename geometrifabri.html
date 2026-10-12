@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini Geometry Dash - Multi-Nivel</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #0b021a;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+            user-select: none;
+        }
+
+        h1 {
+            margin: 0 0 10px 0;
+            font-size: 2rem;
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px #00ffff, 0 0 20px #00ffff;
+        }
+
+        canvas {
+            background: linear-gradient(to bottom, #1a0033, #330066);
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.4);
+            border-radius: 8px;
+            border: 2px solid #00ffff;
+        }
+
+        .instructions {
+            margin-top: 15px;
+            font-size: 0.9rem;
+            color: #aaa;
+            text-align: center;
+        }
+
+        .instructions span {
+            color: #00ffff;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>NEON DASH: EVOLUTION</h1>
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+    <div class="instructions">
+        Usa <span>ESPACIO</span>, <span>CLICK</span> o <span>FLECHA ARRIBA</span> para saltar.<br>
+        ¡Supera los obstáculos y llega al 100% para completar el nivel!
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // --- SISTEMA DE AUDIO ELECTRÓNICO DINÁMICO ---
+        let audioCtx = null;
+        let isPlayingMusic = false;
+        let musicTimer = null;
+
+        function startMusic(level) {
+            if (isPlayingMusic) return;
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            isPlayingMusic = true;
+
+            // Diferentes secuencias musicales y tempos según el nivel
+            const bassNotes = level === 1 ? [110, 110, 146.83, 164.81] : [98.00, 123.47, 110.00, 82.41]; 
+            const melodyNotes = level === 1 ? [220, 261.63, 329.63, 392.00] : [246.94, 293.66, 369.99, 440.00];
+            const tempo = level === 1 ? 120 : 100; // Más rápido el nivel 2 en intervalo
+            let step = 0;
+
+            musicTimer = setInterval(() => {
+                if (!isPlayingMusic || !audioCtx) return;
+
+                // 1. Bajo electrónico
+                const oscBass = audioCtx.createOscillator();
+                const gainBass = audioCtx.createGain();
+                oscBass.type = level === 1 ? 'sawtooth' : 'square';
+                oscBass.frequency.value = bassNotes[Math.floor(step / 2) % bassNotes.length];
+                
+                gainBass.gain.setValueAtTime(0.12, audioCtx.currentTime);
+                gainBass.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+
+                oscBass.connect(gainBass);
+                gainBass.connect(audioCtx.destination);
+                oscBass.start();
+                oscBass.stop(audioCtx.currentTime + 0.15);
+
+                // 2. Melodía aguda
+                if (step % 2 === 0) {
+                    const oscLead = audioCtx.createOscillator();
+                    const gainLead = audioCtx.createGain();
+                    oscLead.type = level === 1 ? 'sine' : 'sawtooth';
+                    oscLead.frequency.value = melodyNotes[Math.floor(Math.random() * melodyNotes.length)];
+
+                    gainLead.gain.setValueAtTime(0.06, audioCtx.currentTime);
+                    gainLead.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.18);
+
+                    oscLead.connect(gainLead);
+                    gainLead.connect(audioCtx.destination);
+                    oscLead.start();
+                    oscLead.stop(audioCtx.currentTime + 0.18);
+                }
+
+                step++;
+            }, tempo);
+        }
+
+        function stopMusic() {
+            isPlayingMusic = false;
+            clearInterval(musicTimer);
+            if (audioCtx) {
+                audioCtx.close();
+                audioCtx = null;
+            }
+        }
+
+        // --- ESTADOS DEL JUEGO ---
+        const GAME_STATE = { MENU: 0, PLAYING: 1, GAMEOVER: 2, WIN: 3 };
+        let currentState = GAME_STATE.MENU;
+
+        let currentLevel = 1;
+
+        // Jugador
+        let player = {
+            x: 100,
+            y: 300,
+            size: 30,
+            vy: 0,
+            gravity: 0.85,
+            jumpForce: -13.5,
+            groundY: 330,
+            rotation: 0,
+            isGrounded: false
+        };
+
+        let obstacles = [];
+        let particles = [];
+        let levelProgress = 0;
+        let levelGoalDistance = 2500; // Distancia para completar el nivel (100%)
+        let gameSpeed = 6;
+
+        // Configurar Nivel
+        function initLevel(lvl) {
+            currentLevel = lvl;
+            player.y = player.groundY - player.size;
+            player.vy = 0;
+            player.rotation = 0;
+            obstacles = [];
+            particles = [];
+            levelProgress = 0;
+
+            if (lvl === 1) {
+                gameSpeed = 6.2;
+                levelGoalDistance = 2200;
+                player.gravity = 0.85;
+                player.jumpForce = -13.5;
+            } else {
+                // Nivel 2: Más rápido, gravedad más pesada y exigente
+                gameSpeed = 7.5;
+                levelGoalDistance = 3200;
+                player.gravity = 0.95;
+                player.jumpForce = -14.2;
+            }
+
+            // Generar mapa de obstáculos del nivel
+            let nextX = 500;
+            while (nextX < levelGoalDistance - 300) {
+                let isDouble = Math.random() > 0.6 && lvl === 2; // Dobles pinchos solo en nivel 2
+                
+                obstacles.push({
+                    x: nextX,
+                    y: player.groundY - 30,
+                    width: 30,
+                    height: 30
+                });
+
+                if (isDouble) {
+                    obstacles.push({
+                        x: nextX + 30,
+                        y: player.groundY - 30,
+                        width: 30,
+                        height: 30
+                    });
+                    nextX += 280;
+                } else {
+                    nextX += Math.floor(Math.random() * 180) + 220;
+                }
+            }
+
+            startMusic(lvl);
+        }
+
+        // Entradas
+        function handleJump() {
+            if (currentState === GAME_STATE.PLAYING) {
+                if (player.isGrounded) {
+                    player.vy = player.jumpForce;
+                    player.isGrounded = false;
+                    createJumpParticles();
+                }
+            } else if (currentState === GAME_STATE.GAMEOVER || currentState === GAME_STATE.WIN) {
+                currentState = GAME_STATE.MENU;
+                stopMusic();
+            }
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' || e.code === 'ArrowUp') {
+                e.preventDefault();
+                handleJump();
+            }
+        });
+
+        // Interacción por clicks / botones en menú
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+
+            if (currentState === GAME_STATE.MENU) {
+                // Botón Nivel 1
+                if (clickX >= canvas.width / 2 - 160 && clickX <= canvas.width / 2 - 10 && clickY >= 230 && clickY <= 290) {
+                    currentState = GAME_STATE.PLAYING;
+                    initLevel(1);
+                }
+                // Botón Nivel 2
+                else if (clickX >= canvas.width / 2 + 10 && clickX <= canvas.width / 2 + 160 && clickY >= 230 && clickY <= 290) {
+                    currentState = GAME_STATE.PLAYING;
+                    initLevel(2);
+                }
+            } else {
+                handleJump();
+            }
+        });
+
+        function createJumpParticles() {
+            for (let i = 0; i < 6; i++) {
+                particles.push({
+                    x: player.x + player.size / 2,
+                    y: player.groundY,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: -Math.random() * 4,
+                    size: Math.random() * 4 + 2,
+                    color: currentLevel === 1 ? '#00ffff' : '#ffaa00'
+                });
+            }
+        }
+
+        // --- BUCLE PRINCIPAL ---
+        function update() {
+            if (currentState === GAME_STATE.PLAYING) {
+                player.vy += player.gravity;
+                player.y += player.vy;
+
+                // Suelo
+                if (player.y >= player.groundY - player.size) {
+                    player.y = player.groundY - player.size;
+                    player.vy = 0;
+                    player.isGrounded = true;
+                    player.rotation = Math.round(player.rotation / (Math.PI / 2)) * (Math.PI / 2);
+                } else {
+                    player.isGrounded = false;
+                    player.rotation += 0.14;
+                }
+
+                // Avance de progreso del nivel
+                levelProgress += gameSpeed;
+                if (levelProgress >= levelGoalDistance) {
+                    currentState = GAME_STATE.WIN;
+                    stopMusic();
+                    return;
+                }
+
+                // Mover obstáculos
+                for (let i = 0; i < obstacles.length; i++) {
+                    let obs = obstacles[i];
+                    obs.x -= gameSpeed;
+
+                    // Colisión AABB precisa
+                    let margin = 6;
+                    if (
+                        player.x + margin < obs.x + obs.width - margin &&
+                        player.x + player.size - margin > obs.x + margin &&
+                        player.y + margin < obs.y + obs.height &&
+                        player.y + player.size - margin > obs.y
+                    ) {
+                        currentState = GAME_STATE.GAMEOVER;
+                        stopMusic();
+                    }
+                }
+
+                // Partículas
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    let p = particles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.size -= 0.1;
+                    if (p.size <= 0) particles.splice(i, 1);
+                }
+            }
+        }
+
+        function draw() {
+            // Fondo dinámico según el nivel
+            if (currentLevel === 2 && currentState === GAME_STATE.PLAYING) {
+                ctx.fillStyle = '#220005'; // Fondo rojizo infernal
+            } else {
+                ctx.fillStyle = '#110022';
+            }
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Rejilla de fondo
+            ctx.strokeStyle = currentLevel === 1 ? 'rgba(0, 255, 255, 0.04)' : 'rgba(255, 100, 0, 0.04)';
+            for (let i = 0; i < canvas.width; i += 40) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, canvas.height);
+                ctx.stroke();
+            }
+
+            // Línea de suelo
+            ctx.strokeStyle = currentLevel === 1 ? '#ff00ff' : '#ff3300';
+            ctx.shadowColor = ctx.strokeStyle;
+            ctx.shadowBlur = 15;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(0, player.groundY);
+            ctx.lineTo(canvas.width, player.groundY);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // Obstáculos
+            ctx.fillStyle = currentLevel === 1 ? '#ff0055' : '#ff6600';
+            ctx.shadowColor = ctx.fillStyle;
+            ctx.shadowBlur = 10;
+            obstacles.forEach(obs => {
+                // Solo dibujar si están en pantalla
+                if (obs.x > -50 && obs.x < canvas.width + 50) {
+                    ctx.beginPath();
+                    ctx.moveTo(obs.x, obs.y + obs.height);
+                    ctx.lineTo(obs.x + obs.width / 2, obs.y);
+                    ctx.lineTo(obs.x + obs.width, obs.y + obs.height);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            });
+            ctx.shadowBlur = 0;
+
+            // Partículas
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            });
+
+            // Jugador
+            ctx.save();
+            ctx.translate(player.x + player.size / 2, player.y + player.size / 2);
+            ctx.rotate(player.rotation);
+            
+            ctx.fillStyle = currentLevel === 1 ? '#00ffff' : '#ffcc00';
+            ctx.shadowColor = ctx.fillStyle;
+            ctx.shadowBlur = 15;
+            ctx.fillRect(-player.size / 2, -player.size / 2, player.size, player.size);
+            
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(-player.size / 4, -player.size / 4, player.size / 2, player.size / 2);
+            ctx.restore();
+            ctx.shadowBlur = 0;
+
+            // --- INTERFAZ / HUD ---
+            if (currentState === GAME_STATE.PLAYING) {
+                let percent = Math.min(100, Math.floor((levelProgress / levelGoalDistance) * 100));
+                
+                // Barra de progreso superior
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                ctx.fillRect(200, 20, 400, 12);
+                
+                ctx.fillStyle = currentLevel === 1 ? '#00ffff' : '#ff3300';
+                ctx.fillRect(200, 20, 4 * percent, 12);
+                
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(200, 20, 400, 12);
+
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(`Nivel ${currentLevel} - ${percent}%`, canvas.width / 2, 50);
+            }
+
+            // --- MENÚ PRINCIPAL ---
+            if (currentState === GAME_STATE.MENU) {
+                ctx.fillStyle = 'rgba(5, 0, 15, 0.85)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#00ffff';
+                ctx.shadowColor = '#00ffff';
+                ctx.shadowBlur = 20;
+                ctx.font = 'bold 38px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('SELECCIONA UN NIVEL', canvas.width / 2, 130);
+                ctx.shadowBlur = 0;
+
+                // Botón Nivel 1
+                ctx.fillStyle = '#1a0033';
+                ctx.strokeStyle = '#00ffff';
+                ctx.lineWidth = 3;
+                ctx.fillRect(canvas.width / 2 - 160, 220, 150, 60);
+                ctx.strokeRect(canvas.width / 2 - 160, 220, 150, 60);
+
+                ctx.fillStyle = '#00ffff';
+                ctx.font = 'bold 18px sans-serif';
+                ctx.fillText('NIVEL 1', canvas.width / 2 - 85, 248);
+                ctx.font = '12px sans-serif';
+                ctx.fillStyle = '#aaa';
+                ctx.fillText('Cyber City (Normal)', canvas.width / 2 - 85, 268);
+
+                // Botón Nivel 2
+                ctx.fillStyle = '#331100';
+                ctx.strokeStyle = '#ff3300';
+                ctx.lineWidth = 3;
+                ctx.fillRect(canvas.width / 2 + 10, 220, 150, 60);
+                ctx.strokeRect(canvas.width / 2 + 10, 220, 150, 60);
+
+                ctx.fillStyle = '#ff3300';
+                ctx.font = 'bold 18px sans-serif';
+                ctx.fillText('NIVEL 2', canvas.width / 2 + 85, 248);
+                ctx.font = '12px sans-serif';
+                ctx.fillStyle = '#aaa';
+                ctx.fillText('Inferno Core (Difícil)', canvas.width / 2 + 85, 268);
+
+            // --- GAME OVER ---
+            } else if (currentState === GAME_STATE.GAMEOVER) {
+                ctx.fillStyle = 'rgba(20, 0, 5, 0.9)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                let percent = Math.min(100, Math.floor((levelProgress / levelGoalDistance) * 100));
+
+                ctx.fillStyle = '#ff0055';
+                ctx.shadowColor = '#ff0055';
+                ctx.shadowBlur = 20;
+                ctx.font = 'bold 40px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('¡HAS CHOCADO!', canvas.width / 2, canvas.height / 2 - 30);
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = 'white';
+                ctx.font = '18px sans-serif';
+                ctx.fillText(`Progreso: ${percent}%`, canvas.width / 2, canvas.height / 2 + 10);
+                ctx.fillStyle = '#00ffff';
+                ctx.fillText('Click o Espacio para volver al menú', canvas.width / 2, canvas.height / 2 + 50);
+
+            // --- VICTORIA ---
+            } else if (currentState === GAME_STATE.WIN) {
+                ctx.fillStyle = 'rgba(0, 20, 10, 0.9)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#00ff66';
+                ctx.shadowColor = '#00ff66';
+                ctx.shadowBlur = 25;
+                ctx.font = 'bold 40px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(`¡NIVEL ${currentLevel} COMPLETADO!`, canvas.width / 2, canvas.height / 2 - 30);
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = 'white';
+                ctx.font = '18px sans-serif';
+                ctx.fillText('¡Meta 100% alcanzada con éxito!', canvas.width / 2, canvas.height / 2 + 10);
+                ctx.fillStyle = '#00ffff';
+                ctx.fillText('Click o Espacio para continuar', canvas.width / 2, canvas.height / 2 + 50);
+            }
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        loop();
+    </script>
+</body>
+</html>

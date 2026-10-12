@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hungry Shark - Edición Evolución</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #0b1d3a;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+            background: linear-gradient(to bottom, #1e5799, #1b538f, #0b1d3a);
+            cursor: none;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 18px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            pointer-events: none;
+        }
+        .bar-container {
+            width: 220px;
+            height: 22px;
+            background: #333;
+            border: 2px solid white;
+            border-radius: 6px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        #hungerBar {
+            width: 100%;
+            height: 100%;
+            background: #2ecc71;
+            transition: width 0.1s;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div>Puntos: <span id="score">0</span> | Nivel: <span id="level">1 (Pequeño)</span></div>
+        <div style="margin-top: 10px;">Hambre:</div>
+        <div class="bar-container">
+            <div id="hungerBar"></div>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+        let score = 0;
+        let hunger = 100;
+        let level = 1;
+        let isGameOver = false;
+
+        let mouse = { x: canvas.width / 2, y: canvas.height / 2 };
+
+        window.addEventListener('mousemove', (e) => {
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+        });
+
+        const shark = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: 30,
+            speed: 0.1,
+            color: "#7f8c8d"
+        };
+
+        let entities = [];
+
+        class Entity {
+            constructor(type) {
+                this.type = type; // 'fish', 'puffer', 'shark', 'bomb'
+                this.reset();
+            }
+
+            reset() {
+                this.y = Math.random() * canvas.height;
+                
+                if (Math.random() < 0.5) {
+                    this.x = -60;
+                    this.direction = 1;
+                } else {
+                    this.x = canvas.width + 60;
+                    this.direction = -1;
+                }
+
+                // Configurar según el tipo
+                if (this.type === 'fish') {
+                    this.radius = 12;
+                    this.speed = 2 + Math.random() * 2;
+                } else if (this.type === 'puffer') {
+                    this.radius = 18;
+                    this.speed = 1.5 + Math.random();
+                } else if (this.type === 'shark') {
+                    this.radius = 45;
+                    this.speed = 2.5 + Math.random();
+                } else if (this.type === 'bomb') {
+                    this.radius = 20;
+                    this.speed = 1 + Math.random();
+                }
+            }
+
+            update() {
+                this.x += this.speed * this.direction;
+                if ((this.direction === 1 && this.x > canvas.width + 80) || 
+                    (this.direction === -1 && this.x < -80)) {
+                    this.reset();
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                if (this.direction === -1) ctx.scale(-1, 1);
+
+                if (this.type === 'fish') {
+                    // Pequeño pez dorado
+                    ctx.fillStyle = "#f1c40f";
+                    ctx.beginPath();
+                    ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Cola
+                    ctx.fillStyle = "#f39c12";
+                    ctx.beginPath();
+                    ctx.moveTo(-this.radius, 0);
+                    ctx.lineTo(-this.radius - 8, -6);
+                    ctx.lineTo(-this.radius - 8, 6);
+                    ctx.fill();
+                } else if (this.type === 'puffer') {
+                    // Pez globo espinoso
+                    ctx.fillStyle = "#e67e22";
+                    ctx.beginPath();
+                    ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Espinas simples
+                    ctx.strokeStyle = "#d35400";
+                    ctx.lineWidth = 3;
+                    for (let i = 0; i < 6; i++) {
+                        let angle = (i * Math.PI) / 3;
+                        ctx.beginPath();
+                        ctx.moveTo(Math.cos(angle) * (this.radius - 2), Math.sin(angle) * (this.radius - 2));
+                        ctx.lineTo(Math.cos(angle) * (this.radius + 6), Math.sin(angle) * (this.radius + 6));
+                        ctx.stroke();
+                    }
+                } else if (this.type === 'shark') {
+                    // Tiburón rival más oscuro
+                    ctx.fillStyle = "#34495e";
+                    ctx.beginPath();
+                    ctx.ellipse(0, 0, this.radius, this.radius / 1.7, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Aleta rival
+                    ctx.beginPath();
+                    ctx.moveTo(-5, -this.radius / 1.5);
+                    ctx.lineTo(5, -this.radius - 12);
+                    ctx.lineTo(12, -this.radius / 1.5);
+                    ctx.fill();
+                } else if (this.type === 'bomb') {
+                    // Bomba marina
+                    ctx.fillStyle = "#2c3e50";
+                    ctx.beginPath();
+                    ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Mecha encendida
+                    ctx.strokeStyle = "#e74c3c";
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(0, -this.radius);
+                    ctx.quadraticCurveTo(10, -this.radius - 15, 15, -this.radius - 10);
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            }
+        }
+
+        // Poblar el océano con variedad
+        entities.push(new Entity('fish'));
+        entities.push(new Entity('fish'));
+        entities.push(new Entity('fish'));
+        entities.push(new Entity('puffer'));
+        entities.push(new Entity('bomb'));
+        entities.push(new Entity('shark'));
+
+        function animate() {
+            if (isGameOver) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Movimiento suave del tiburón jugador
+            shark.x += (mouse.x - shark.x) * shark.speed;
+            shark.y += (mouse.y - shark.y) * shark.speed;
+
+            // Dibujar al Tiburón Jugador con diseño de evolución
+            ctx.save();
+            ctx.translate(shark.x, shark.y);
+            // Dirección visual según hacia dónde se mueve el mouse
+            if (mouse.x < shark.x) ctx.scale(-1, 1);
+
+            ctx.fillStyle = shark.color;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, shark.radius, shark.radius / 1.8, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Aleta dorsal
+            ctx.beginPath();
+            ctx.moveTo(-5, -shark.radius / 1.5);
+            ctx.lineTo(10, -shark.radius - 15);
+            ctx.lineTo(15, -shark.radius / 1.5);
+            ctx.fill();
+
+            // Ojo
+            ctx.fillStyle = "white";
+            ctx.beginPath();
+            ctx.arc(shark.radius / 2, -5, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "black";
+            ctx.beginPath();
+            ctx.arc(shark.radius / 2 + 1, -5, 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // Reducir hambre progresivamente
+            let drainRate = level === 1 ? 0.05 : 0.08; // Los grandes gastan más energía
+            hunger -= drainRate;
+            if (hunger <= 0) {
+                hunger = 0;
+                isGameOver = true;
+                alert("¡Tu tiburón ha muerto de hambre! Puntuación final: " + score);
+                location.reload();
+            }
+            document.getElementById("hungerBar").style.width = hunger + "%";
+
+            // Actualizar entidades y comprobar colisiones
+            entities.forEach(ent => {
+                ent.update();
+                ent.draw();
+
+                let distX = shark.x - ent.x;
+                let distY = shark.y - ent.y;
+                let distance = Math.sqrt(distX * distX + distY * distY);
+
+                if (distance < shark.radius + ent.radius) {
+                    if (ent.type === 'fish') {
+                        score += 10;
+                        hunger = Math.min(100, hunger + 15);
+                        ent.reset();
+                    } else if (ent.type === 'puffer') {
+                        // El pez globo daña al tiburón
+                        hunger -= 30;
+                        ent.reset();
+                    } else if (ent.type === 'bomb') {
+                        // La bomba explota y acaba la partida
+                        isGameOver = true;
+                        alert("¡¡BOOM!! Tu tiburón chocó con una bomba marina. Fin del juego.");
+                        location.reload();
+                    } else if (ent.type === 'shark') {
+                        // Tiburón enemigo: Solo se puede comer si ya evolucionó (Nivel 2)
+                        if (level >= 2) {
+                            score += 50;
+                            hunger = Math.min(100, hunger + 40);
+                            ent.reset();
+                        } else {
+                            // Si es pequeño, el tiburón rival le quita vida
+                            hunger -= 40;
+                            ent.x += ent.direction * 100; // Rebote defensivo
+                        }
+                    }
+                }
+            });
+
+            // Sistema de Evolución
+            if (score >= 100 && level === 1) {
+                level = 2;
+                shark.radius = 50; // Crece de tamaño
+                shark.color = "#2980b9"; // Cambia a azul fuerte (tiburón avanzado)
+                document.getElementById("level").innerText = "2 (¡Tiburón Avanzado!)";
+                alert("¡FELICIDADES! Tu tiburón ha evolucionado. Ahora eres más grande y puedes comerte a los tiburones rivales.");
+            }
+
+            document.getElementById("score").innerText = score;
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
